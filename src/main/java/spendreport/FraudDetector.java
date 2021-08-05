@@ -18,17 +18,27 @@
 
 package spendreport;
 
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.walkthrough.common.entity.Alert;
 import org.apache.flink.walkthrough.common.entity.Transaction;
 
 /**
+ * 关于数据流的业务逻辑
+ * 欺诈检查类 FraudDetector 是 KeyedProcessFunction 接口的一个实现。
+ * 他的方法 KeyedProcessFunction#processElement 将会在每个交易事件上被调用。
+ * 这个程序里边会对每笔交易发出警报
  * Skeleton code for implementing a fraud detector.
  */
 public class FraudDetector extends KeyedProcessFunction<Long, Transaction, Alert> {
 
 	private static final long serialVersionUID = 1L;
+	//判断上笔交易是否为小额交易状态
+	private transient ValueState<Boolean> flagState;
 
 	private static final double SMALL_AMOUNT = 1.00;
 	private static final double LARGE_AMOUNT = 500.00;
@@ -39,10 +49,38 @@ public class FraudDetector extends KeyedProcessFunction<Long, Transaction, Alert
 			Transaction transaction,
 			Context context,
 			Collector<Alert> collector) throws Exception {
+		// Get the current state for the current key
+		Boolean lastTransactionWasSmall = flagState.value();
 
-		Alert alert = new Alert();
+		// Check if the flag is set
+		if (lastTransactionWasSmall != null) {
+			if (transaction.getAmount() > LARGE_AMOUNT) {
+				// Output an alert downstream
+				Alert alert = new Alert();
+				alert.setId(transaction.getAccountId());
+
+				collector.collect(alert);
+			}
+
+			// Clean up our state
+			flagState.clear();
+		}
+
+		if (transaction.getAmount() < SMALL_AMOUNT) {
+			// Set the flag to true
+			flagState.update(true);
+		}
+		/*Alert alert = new Alert();
 		alert.setId(transaction.getAccountId());
 
-		collector.collect(alert);
+		collector.collect(alert);*/
+	}
+
+	@Override
+	public void open(Configuration parameters) {
+		ValueStateDescriptor<Boolean> flagDescriptor = new ValueStateDescriptor<>(
+				"flag",
+				Types.BOOLEAN);
+		flagState = getRuntimeContext().getState(flagDescriptor);
 	}
 }
